@@ -1,0 +1,3 @@
+module github.com/qualvey/pkg
+
+go 1.27.3
