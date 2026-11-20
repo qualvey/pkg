@@ -11,18 +11,69 @@ Go 后端微核心基础设施库 (Universal Micro-Core Infrastructure Library f
 | 模块 | 说明 | 状态 |
 | :--- | :--- | :--- |
 | **[`logger`](./logger)** | 基于 `log/slog` 的高性能双模自适应日志系统（终端彩色 Pretty + 生产单行 JSON + Context 链路透传 + HTTP 中间件 + 启动看板） | ✅ 稳定可用 (v0.1.0) |
-| `response` | 统一 RESTful API 响应与业务错误码体系 | 规划中 |
-| `env` | 环境变量类型安全读取与生产必填项强校验 | 规划中 |
-| `auth` | 纯标准库 JWT 签发、校验与 Context 透传门面 | 规划中 |
-| `database` | SQLite WAL / PG 驱动连接池配置与自动事务闭包 | 规划中 |
-| `middleware` | RequestID / CORS / Panic 恢复 / 防刷限流套件 | 规划中 |
+| **[`env`](./env)** | 声明式结构体驱动的环境变量安全读取、纯标准库极简 `.env` 解析与生产必填项强校验 | ✅ 稳定可用 (v0.2.0) |
+| **[`response`](./response)** | 统一 RESTful API 响应与业务错误码体系（纯标准库核心 + Gin 适配器） | ✅ 稳定可用 (v0.2.0) |
+| **[`auth`](./auth)** | 基于行业标准库的高性能泛型 JWT 签发、校验与 Context 透传门面 | ✅ 稳定可用 (v0.2.0) |
+| **[`database`](./database)** | SQLite WAL 模式防锁并发配置、PostgreSQL 连接池预设与自动事务闭包 | ✅ 稳定可用 (v0.2.0) |
+| **[`middleware`](./middleware)** | RequestID 链路透传、CORS 规则器、Panic 安全恢复与令牌桶限流套件 | ✅ 稳定可用 (v0.2.0) |
 
 ---
 
 ## 安装与引入 (Installation)
 
+> GitHub: `github.com/qualvey/pkg`，模块路径 `github.com/qualvey/pkg`，按子包按需引入，无需 clone。
+
 ```bash
+# 直接引用（推荐锁定版本，可复现构建）
+go get github.com/qualvey/pkg@v0.1.0
+
+# 或始终跟进最新 main
 go get github.com/qualvey/pkg@latest
+```
+
+`go.mod` 中会自动加入：
+
+```go
+require github.com/qualvey/pkg v0.1.0
+```
+
+各模块 import 路径（按需只引需要的）：
+
+```go
+import (
+	"github.com/qualvey/pkg/logger"
+	"github.com/qualvey/pkg/env"
+	"github.com/qualvey/pkg/response"
+	"github.com/qualvey/pkg/auth"
+	"github.com/qualvey/pkg/database"
+	"github.com/qualvey/pkg/middleware"
+)
+```
+
+最小可运行示例：
+
+```go
+package main
+
+import (
+	"github.com/qualvey/pkg/env"
+	"github.com/qualvey/pkg/logger"
+)
+
+type Config struct {
+	Port int    `env:"PORT" default:"8080"`
+	Env  string `env:"APP_ENV" default:"development"`
+}
+
+func main() {
+	var cfg Config
+	if err := env.Load(&cfg); err != nil {
+		panic(err)
+	}
+
+	logger.Init(cfg.Env, "", "")
+	logger.Info("service start on port: %d", cfg.Port)
+}
 ```
 
 ---

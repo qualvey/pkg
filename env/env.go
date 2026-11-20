@@ -3,6 +3,7 @@ package env
 import (
 	"bufio"
 	"bytes"
+	"encoding"
 	"fmt"
 	"net/url"
 	"os"
@@ -119,12 +120,18 @@ func parseStruct(val reflect.Value, isProd bool, errs *ValidationErrors) error {
 			continue
 		}
 
-		// 递归处理嵌套结构体
-		if fieldVal.Kind() == reflect.Struct && fieldType.Anonymous {
-			if err := parseStruct(fieldVal, isProd, errs); err != nil {
-				return err
+		// 递归处理嵌套结构体：匿名嵌入一定递归；具名结构体若自身无 env tag
+		// 且未实现 encoding.TextUnmarshaler（如 decimal.Decimal），也递归解析内部字段。
+		// 这允许按业务域拆分配置（如 type DBConfig struct {...} + Config{ DB DBConfig }）。
+		if fieldVal.Kind() == reflect.Struct && fieldVal.CanAddr() {
+			if _, ok := fieldVal.Addr().Interface().(encoding.TextUnmarshaler); !ok {
+				if fieldType.Anonymous || fieldType.Tag.Get("env") == "" {
+					if err := parseStruct(fieldVal, isProd, errs); err != nil {
+						return err
+					}
+					continue
+				}
 			}
-			continue
 		}
 
 		envTag := fieldType.Tag.Get("env")
@@ -222,6 +229,17 @@ func setFieldValue(field reflect.Value, raw string) error {
 		}
 		field.Set(reflect.ValueOf(d))
 		return nil
+	}
+
+	// 通用扩展：支持任何实现 encoding.TextUnmarshaler 的类型
+	//（如 shopspring/decimal.Decimal、net/netip.Addr 等），零依赖、向后兼容。
+	if field.CanAddr() {
+		if u, ok := field.Addr().Interface().(encoding.TextUnmarshaler); ok {
+			if err := u.UnmarshalText([]byte(raw)); err != nil {
+				return err
+			}
+			return nil
+		}
 	}
 
 	switch field.Kind() {
@@ -332,11 +350,27 @@ func IsProd() bool {
 // ------------------------------------------------------------
 
 func loadDotEnvFile(filename string, override bool) error {
-	data, err := os.ReadFile(filename)
+	values, err := LoadFileAsMap(filename)
 	if err != nil {
 		return err
 	}
+	for key, val := range values {
+		if _, exists := os.LookupEnv(key); !exists || override {
+			_ = os.Setenv(key, val)
+		}
+	}
+	return nil
+}
 
+// LoadFileAsMap 以只读方式解析 .env 文件为 map，不触碰系统环境变量。
+// 用于 SIGHUP 热重载 LOG_LEVEL 等只读场景，可替代 godotenv.Read。
+func LoadFileAsMap(filename string) (map[string]string, error) {
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		return nil, err
+	}
+
+	values := make(map[string]string)
 	scanner := bufio.NewScanner(bytes.NewReader(data))
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -350,6 +384,15 @@ func loadDotEnvFile(filename string, override bool) error {
 		}
 
 		key := strings.TrimSpace(line[:idx])
+		// 兼容 `export KEY=val` 写法
+		if stripped, ok := strings.CutPrefix(key, "export "); ok {
+			key = strings.TrimSpace(stripped)
+		} else if stripped, ok := strings.CutPrefix(key, "export\t"); ok {
+			key = strings.TrimSpace(stripped)
+		}
+		if key == "" {
+			continue
+		}
 		val := strings.TrimSpace(line[idx+1:])
 
 		// 优先处理非引号内的行尾注释
@@ -370,12 +413,10 @@ func loadDotEnvFile(filename string, override bool) error {
 			}
 		}
 
-		if _, exists := os.LookupEnv(key); !exists || override {
-			_ = os.Setenv(key, val)
-		}
+		values[key] = val
 	}
 
-	return scanner.Err()
+	return values, scanner.Err()
 }
 
 // ------------------------------------------------------------
